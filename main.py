@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import uuid
 import threading
@@ -78,10 +79,29 @@ security = HTTPBearer(auto_error=False)
 # Helper functions
 def load_models():
     """加载模型配置"""
+    # 首先尝试从环境变量加载
+    env_models = os.getenv("AVAILABLE_MODELS")
+    if env_models:
+        try:
+            model_ids = [model.strip() for model in env_models.split(",") if model.strip()]
+            processed_models = []
+            for model_id in model_ids:
+                processed_models.append({
+                    "id": model_id,
+                    "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": "jetbrains-ai"
+                })
+            print(f"从环境变量加载了 {len(processed_models)} 个模型")
+            return {"data": processed_models}
+        except Exception as e:
+            print(f"从环境变量加载模型时出错: {e}")
+
+    # 回退到文件加载
     try:
         with open("models.json", "r", encoding="utf-8") as f:
             model_ids = json.load(f)
-        
+
         processed_models = []
         if isinstance(model_ids, list):
             for model_id in model_ids:
@@ -92,15 +112,54 @@ def load_models():
                         "created": int(time.time()),
                         "owned_by": "jetbrains-ai"
                     })
-        
+
+        print(f"从文件加载了 {len(processed_models)} 个模型")
         return {"data": processed_models}
     except Exception as e:
         print(f"加载 models.json 时出错: {e}")
-        return {"data": []}
+        # 使用默认模型列表
+        default_models = [
+            "anthropic-claude-3.7-sonnet",
+            "anthropic-claude-4-sonnet",
+            "google-chat-gemini-pro-2.5",
+            "openai-o4-mini",
+            "openai-o3-mini",
+            "openai-o3",
+            "openai-o1",
+            "openai-gpt-4o",
+            "anthropic-claude-3.5-sonnet",
+            "openai-gpt4.1"
+        ]
+        processed_models = []
+        for model_id in default_models:
+            processed_models.append({
+                "id": model_id,
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "jetbrains-ai"
+            })
+        print(f"使用默认模型列表，共 {len(processed_models)} 个模型")
+        return {"data": processed_models}
 
 def load_client_api_keys():
     """加载客户端 API 密钥"""
     global VALID_CLIENT_KEYS
+
+    # 首先尝试从环境变量加载
+    env_keys = os.getenv("CLIENT_API_KEYS")
+    if env_keys:
+        try:
+            keys = [key.strip() for key in env_keys.split(",") if key.strip()]
+            VALID_CLIENT_KEYS = set(keys)
+            if not VALID_CLIENT_KEYS:
+                print("警告: 环境变量 CLIENT_API_KEYS 为空")
+            else:
+                print(f"从环境变量成功加载 {len(VALID_CLIENT_KEYS)} 个客户端 API 密钥")
+            return
+        except Exception as e:
+            print(f"从环境变量加载客户端 API 密钥时出错: {e}")
+
+    # 回退到文件加载
     try:
         with open("client_api_keys.json", "r", encoding="utf-8") as f:
             keys = json.load(f)
@@ -112,9 +171,9 @@ def load_client_api_keys():
             if not VALID_CLIENT_KEYS:
                 print("警告: client_api_keys.json 为空")
             else:
-                print(f"成功加载 {len(VALID_CLIENT_KEYS)} 个客户端 API 密钥")
+                print(f"从文件成功加载 {len(VALID_CLIENT_KEYS)} 个客户端 API 密钥")
     except FileNotFoundError:
-        print("错误: 未找到 client_api_keys.json")
+        print("错误: 未找到 client_api_keys.json 且未设置环境变量 CLIENT_API_KEYS")
         VALID_CLIENT_KEYS = set()
     except Exception as e:
         print(f"加载 client_api_keys.json 时出错: {e}")
@@ -123,20 +182,36 @@ def load_client_api_keys():
 def load_jetbrains_jwts():
     """加载 JetBrains AI 认证 JWT"""
     global JETBRAINS_JWTS
+
+    # 首先尝试从环境变量加载
+    env_jwts = os.getenv("JETBRAINS_JWTS")
+    if env_jwts:
+        try:
+            jwts = [jwt.strip() for jwt in env_jwts.split(",") if jwt.strip()]
+            JETBRAINS_JWTS = jwts
+            if not JETBRAINS_JWTS:
+                print("警告: 环境变量 JETBRAINS_JWTS 为空")
+            else:
+                print(f"从环境变量成功加载 {len(JETBRAINS_JWTS)} 个 JetBrains AI JWT")
+            return
+        except Exception as e:
+            print(f"从环境变量加载 JetBrains JWT 时出错: {e}")
+
+    # 回退到文件加载
     try:
         with open("jetbrainsai.json", "r", encoding="utf-8") as f:
             # 假设 jetbrainsai.json 包含一个对象列表，每个对象都有 'jwt' 键
             jwt_data = json.load(f)
             if isinstance(jwt_data, list):
                 JETBRAINS_JWTS = [item.get("jwt") for item in jwt_data if "jwt" in item]
-        
+
         if not JETBRAINS_JWTS:
             print("警告: jetbrainsai.json 中未找到有效的 JWT")
         else:
-            print(f"成功加载 {len(JETBRAINS_JWTS)} 个 JetBrains AI JWT")
-            
+            print(f"从文件成功加载 {len(JETBRAINS_JWTS)} 个 JetBrains AI JWT")
+
     except FileNotFoundError:
-        print("错误: 未找到 jetbrainsai.json 文件")
+        print("错误: 未找到 jetbrainsai.json 文件且未设置环境变量 JETBRAINS_JWTS")
         JETBRAINS_JWTS = []
     except Exception as e:
         print(f"加载 jetbrainsai.json 时出错: {e}")
@@ -375,28 +450,38 @@ async def chat_completions(
 
 # 主程序入口
 if __name__ == "__main__":
-    import os
-    
-    # 创建示例配置文件（如果不存在）
-    if not os.path.exists("client_api_keys.json"):
-        with open("client_api_keys.json", "w", encoding="utf-8") as f:
-            json.dump(["sk-your-custom-key-here"], f, indent=2)
-        print("已创建示例 client_api_keys.json 文件")
+    # 获取端口配置
+    port = int(os.getenv("PORT", 8000))
 
-    if not os.path.exists("jetbrainsai.json"):
-        with open("jetbrainsai.json", "w", encoding="utf-8") as f:
-            json.dump([{"jwt": "your-jwt-here"}], f, indent=2)
-        print("已创建示例 jetbrainsai.json 文件")
+    # 检查是否有环境变量配置
+    has_env_config = bool(os.getenv("CLIENT_API_KEYS") and os.getenv("JETBRAINS_JWTS"))
 
-    if not os.path.exists("models.json"):
-        with open("models.json", "w", encoding="utf-8") as f:
-            json.dump(["anthropic-claude-3.5-sonnet"], f, indent=2)
-        print("已创建示例 models.json 文件")
-    
+    if not has_env_config:
+        # 创建示例配置文件（如果不存在且没有环境变量配置）
+        if not os.path.exists("client_api_keys.json"):
+            with open("client_api_keys.json", "w", encoding="utf-8") as f:
+                json.dump(["sk-your-custom-key-here"], f, indent=2)
+            print("已创建示例 client_api_keys.json 文件")
+
+        if not os.path.exists("jetbrainsai.json"):
+            with open("jetbrainsai.json", "w", encoding="utf-8") as f:
+                json.dump([{"jwt": "your-jwt-here"}], f, indent=2)
+            print("已创建示例 jetbrainsai.json 文件")
+
+        if not os.path.exists("models.json"):
+            with open("models.json", "w", encoding="utf-8") as f:
+                json.dump(["anthropic-claude-3.5-sonnet"], f, indent=2)
+            print("已创建示例 models.json 文件")
+
+        print("提示: 您可以使用 .env 文件进行配置，参考 .env.example 文件")
+    else:
+        print("使用环境变量配置")
+
     print("正在启动 JetBrains AI OpenAI Compatible API 服务器...")
     print("端点:")
     print("  GET  /v1/models")
     print("  POST /v1/chat/completions")
-    print("\n在 Authorization header 中使用客户端 API 密钥 (Bearer sk-xxx)")
-    
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    print(f"\n服务器将在端口 {port} 上启动")
+    print("在 Authorization header 中使用客户端 API 密钥 (Bearer sk-xxx)")
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
